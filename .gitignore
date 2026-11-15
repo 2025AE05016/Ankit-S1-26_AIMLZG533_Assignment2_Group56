@@ -1,0 +1,29 @@
+# Local settings and credentials
+.DS_Store
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+*.pem
+*.key
+
+# Python and notebook caches
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+
+# Downloaded data, model weights, generated run artifacts
+/data/
+/runs/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.log
+
+# Generated submission bundles and personal lab evidence
+*.zip
+/BITS_lab_usage.jpg
