@@ -1,3 +1,18 @@
+# Latest training-fix validation
+
+Verified after the GAN/PixelCNN corrections:
+
+- `python test_implementation.py`: all **12 tests passed**.
+- The prior regression uses a controlled validation loss that improves then worsens; it verifies best-epoch inference weights, latest-epoch recovery weights, and reload behavior.
+- The GAN regression checks training mode during both critic and generator updates for WGAN and WGAN-GP, followed by evaluation mode for sample grids.
+- `python test_pipeline.py`: VQ-VAE → latent maps → trained PixelCNN → samples; both GAN training loops; 100-image outputs; and custom-feature FID sanity check passed.
+- `python test_reporting.py`: draft PDF generation and rejection of smoke results as final passed.
+- Both notebooks pass schema/code syntax checks; HTML previews regenerated.
+
+These are CPU/synthetic-data checks, not full CIFAR-10 training or evidence of BITS lab usage. Use a new run directory for runs made with the earlier implementation.
+
+## Earlier baseline validation log
+
 # Local implementation validation
 
 These checks use random synthetic tensors, not full CIFAR-10 training. Their numbers are not assignment results. No BITS lab session, official 2048-feature FID run or screenshot was produced here.

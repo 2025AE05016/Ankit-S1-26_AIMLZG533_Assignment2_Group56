@@ -56,7 +56,7 @@ After CLI training, run the notebooks too. Their training calls will reuse match
 
 ## 3. Evaluation choices
 
-- Validation PSNR is recorded every epoch. Final test metrics are computed at the final scheduled checkpoint without choosing a checkpoint using test FID.
+- Validation PSNR is recorded every epoch. Autoencoders and GANs use the final scheduled checkpoint. PixelCNN sampling uses `prior_best.pt`, selected by validation cross-entropy; `prior_last.pt` preserves the latest training state for recovery. No checkpoint is selected using test data or test FID.
 - PSNR uses range 1 and averages per-image dB values. VAE reconstructions use posterior means. GAN reconstruction PSNR/MSE is **N/A**, since unconditional samples have no paired target.
 - All final FIDs use 10,000 official test images and 10,000 generated images, standard 2,048-dimensional Inception features, float32 feature extraction and float64 statistics. A first-use weight download is required.
 - VAE FID uses standard-normal prior samples; VQ FID uses learned PixelCNN prior samples. Reconstruction FID and uniform random code sampling are not substituted.
@@ -93,3 +93,7 @@ The ZIP contains the two executed notebooks, both HTML exports, Part C PDF, mand
 **Provide lab access and runtime; confirm the allocated GPU; add remaining group members; execute the full training; inspect and interpret actual results; write the perceptual observations; capture the real lab screenshot; save/export and upload the group deliverables.** No lab login, real screenshot or training result has been fabricated here.
 
 The brief specifies no fixed epoch count or numerical FID/PSNR cutoff. It explicitly deducts marks for inadequate training and unsatisfactory metrics, so convergence and sample quality require review. There is no deadline specified in the supplied two-page brief; check your course portal.
+
+## Training corrections
+
+The GAN generator stays in training mode during both critic and generator updates; critic-only fake images are computed under `no_grad`. Evaluation mode is reserved for sample generation/evaluation. PixelCNN sampling restores the validation-best prior, with its selected epoch recorded in metrics. Start a new `run_dir` if you already trained with the earlier code: the source-integrity check deliberately prevents mixing implementations.

@@ -4,12 +4,14 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import TensorDataset
 from udl.models import BetaVAE, VQVAE, PixelCNN, Generator, Critic, gradient_penalty
-from udl.pipeline import psnr_per_image, checkpoint, resume, seed_all, config_signature, train_autoencoder
+from udl.pipeline import psnr_per_image, checkpoint, resume, seed_all, config_signature, train_autoencoder, train_prior, train_gan
 
 class ModelTests(unittest.TestCase):
     @classmethod
@@ -93,5 +95,49 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(len(history), 1); self.assertTrue(torch.isfinite(torch.tensor(history[0]['loss'])))
             _, history2, seconds2 = train_autoencoder(BetaVAE(8), 'unit_vae', dataset, dataset, cfg, beta=1)
             self.assertEqual(history, history2); self.assertEqual(seconds, seconds2)
+
+    def test_prior_selects_validation_best_and_preserves_latest_resume_state(self):
+        cfg = json.loads(Path('config.json').read_text())
+        original_ce = F.cross_entropy
+        validation_losses = iter([2.0, 1.0, 3.0])
+        def controlled_ce(logits, targets, **kwargs):
+            if torch.is_grad_enabled():
+                return original_ce(logits, targets, **kwargs)
+            value = next(validation_losses)
+            return torch.tensor(value * targets.numel(), device=logits.device)
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg.update(device='cpu', run_dir=tmp, workers=0, smoke=True, batch_size=2, prior_epochs=3)
+            path = Path(tmp) / 'vq_test'; path.mkdir()
+            torch.save({'train': torch.randint(0,4,(4,2,2)), 'validation': torch.randint(0,4,(2,2,2))}, path/'latent_maps.pt')
+            factory = lambda size: PixelCNN(size, channels=8, layers=1)
+            with patch('udl.pipeline.PixelCNN', side_effect=factory), patch('udl.pipeline.F.cross_entropy', side_effect=controlled_ce):
+                prior, history, elapsed = train_prior(SimpleNamespace(size=4), 'vq_test', None, None, cfg)
+            best = torch.load(path/'prior_best.pt', weights_only=True)
+            latest = torch.load(path/'prior_last.pt', weights_only=False)
+            self.assertEqual(best['epoch'], 2)
+            self.assertEqual(latest['epoch'], 3)
+            self.assertEqual(len(history), 3)
+            for key, value in prior.state_dict().items(): self.assertTrue(torch.equal(value, best['model'][key]))
+            self.assertTrue(any(not torch.equal(value, best['model'][key]) for key,value in latest['models']['prior'].items()))
+            with patch('udl.pipeline.PixelCNN', side_effect=factory):
+                recovered, recovered_history, _ = train_prior(SimpleNamespace(size=4), 'vq_test', None, None, cfg)
+            self.assertEqual(recovered_history, history)
+            for key,value in recovered.state_dict().items(): self.assertTrue(torch.equal(value,best['model'][key]))
+
+    def test_gan_uses_train_mode_for_both_update_types(self):
+        modes = []
+        class TrackingGenerator(Generator):
+            def forward(self, z):
+                modes.append(self.training)
+                return super().forward(z)
+        cfg = json.loads(Path('config.json').read_text())
+        dataset = TensorDataset(torch.rand(2,3,32,32),torch.zeros(2))
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg.update(device='cpu',run_dir=tmp,workers=0,smoke=True,batch_size=2,
+                       gan_epochs=1,n_critic=2,latent_dim=8)
+            for kind in ('wgan','wgan_gp'):
+                modes.clear()
+                with patch('udl.pipeline.Generator',TrackingGenerator): train_gan(kind,dataset,cfg)
+                self.assertEqual(modes,[True,True,True,False])
 
 if __name__ == '__main__': unittest.main(verbosity=2)

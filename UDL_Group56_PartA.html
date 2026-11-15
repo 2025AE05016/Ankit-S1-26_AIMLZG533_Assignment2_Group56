@@ -7873,7 +7873,7 @@ Add the remaining members of your Assignment 1 group to <code>config.json</code>
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h2 id="1.-CIFAR-10-and-evaluation-protocol">1. CIFAR-10 and evaluation protocol<a class="anchor-link" href="#1.-CIFAR-10-and-evaluation-protocol">¶</a></h2><p>Use <code>ToTensor()</code> to scale RGB pixels into [0,1], with no class-label conditioning and no augmentation. A fixed seed-42 partition holds out 5,000 training images for validation and all 10,000 test images for final metrics. Validation PSNR is monitored each epoch; final checkpoints are used without selecting on test FID.</p>
+<h2 id="1.-CIFAR-10-and-evaluation-protocol">1. CIFAR-10 and evaluation protocol<a class="anchor-link" href="#1.-CIFAR-10-and-evaluation-protocol">¶</a></h2><p>Use <code>ToTensor()</code> to scale RGB pixels into [0,1], with no class-label conditioning and no augmentation. A fixed seed-42 partition holds out 5,000 training images for validation and all 10,000 test images for final metrics. Validation PSNR is monitored each epoch; autoencoders and GANs use final checkpoints; PixelCNN uses its best validation-loss checkpoint, without selection on test FID.</p>
 <p>FID is computed using 2,048-dimensional Inception features and 10,000 real/10,000 generated images for every model. The library handles resizing internally. VAE generation uses z~N(0,I); VQ-VAE generation uses ancestral PixelCNN codes. Reconstructions and uniformly random codebook entries are not used as generated FID samples.</p>
 </div>
 </div>
@@ -7923,6 +7923,7 @@ Add the remaining members of your Assignment 1 group to <code>config.json</code>
 <h2 id="3.-VQ-VAE-%E2%80%94-K-in-%7B512,256,128%7D-%5B3-marks%5D">3. VQ-VAE — K in {512,256,128} [3 marks]<a class="anchor-link" href="#3.-VQ-VAE-%E2%80%94-K-in-%7B512,256,128%7D-%5B3-marks%5D">¶</a></h2><p>The encoder produces 8×8×64 continuous latents. Nearest-neighbor lookup selects one of K embedding vectors at each spatial location. Straight-through gradients train the encoder; the codebook and commitment losses train the discrete representation. A decoder reconstructs from the chosen embeddings.</p>
 <p>After training each VQ-VAE, freeze its encoder/codebook and extract train and validation maps. A masked-convolution PixelCNN models p(code[row,col] | preceding raster codes). Its first type-A mask excludes the current code and later positions. Type-B hidden masks preserve causality. Train by categorical cross-entropy, sample the entire 8×8 map in raster order at temperature 1, then decode the sampled embeddings.</p>
 <p>Quality checks include PSNR/MSE, code usage histogram, active fraction, dead entries, perplexity and PixelCNN validation bits/code. A large K is not automatically better; compare perplexity relative to K and inspect sampling quality.</p>
+<p>PixelCNN keeps <code>prior_last.pt</code> for training recovery and <code>prior_best.pt</code> for sampling, selected only by validation cross-entropy.</p>
 </div>
 </div>
 </div>

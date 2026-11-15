@@ -211,6 +211,14 @@ def train_prior(vq, name, train, val, cfg):
     prior = PixelCNN(vq.size).to(cfg['device'])
     opt = torch.optim.Adam(prior.parameters(), lr=cfg['prior_lr'])
     start, history, elapsed = resume(path / 'prior_last.pt', {'prior': prior}, {'optimizer': opt}, cfg)
+    best_path = path / 'prior_best.pt'
+    best_loss = float('inf')
+    if best_path.exists():
+        best = torch.load(best_path, map_location='cpu', weights_only=True)
+        assert best['signature'] == config_signature(cfg), 'Best-prior checkpoint/configuration mismatch.'
+        best_loss = best['val_nats_per_code']
+    elif history:
+        raise RuntimeError('Prior history exists without prior_best.pt. Start a new run directory; earlier best weights cannot be recovered.')
     train_loader = loader(TensorDataset(maps['train']), cfg, shuffle=True)
     val_loader = loader(TensorDataset(maps['validation']), cfg)
     for epoch in range(start + 1, cfg['prior_epochs'] + 1):
@@ -230,9 +238,20 @@ def train_prior(vq, name, train, val, cfg):
         row = {'epoch': epoch, 'train_nats_per_code': total / tokens,
                'val_nats_per_code': valid_total / valid_tokens, 'val_bits_per_code': valid_total / valid_tokens / math.log(2),
                'epoch_training_seconds': seconds}
+        if not math.isfinite(row['val_nats_per_code']):
+            raise FloatingPointError('Nonfinite PixelCNN validation loss')
+        if row['val_nats_per_code'] < best_loss:
+            best_loss = row['val_nats_per_code']
+            atomic_save(best_path, {'model': prior.state_dict(), 'epoch': epoch,
+                                   'val_nats_per_code': best_loss, 'signature': config_signature(cfg)})
         history.append(row); atomic_json(path / 'prior_history.json', history)
         checkpoint(path / 'prior_last.pt', {'prior': prior}, {'optimizer': opt}, epoch, history, cfg, elapsed)
         print(f'{name} prior {epoch}/{cfg["prior_epochs"]}: val={row["val_bits_per_code"]:.3f} bits/code', flush=True)
+    # Restore inference weights only; prior_last.pt retains the latest model/optimizer/RNG for resume.
+    best = torch.load(best_path, map_location=cfg['device'], weights_only=True)
+    assert best['signature'] == config_signature(cfg)
+    prior.load_state_dict(best['model'])
+    print(f"{name}: sampling with validation-best PixelCNN epoch {best['epoch']}")
     return prior.eval(), history, elapsed
 
 def next_images(iterator, data_loader, device):
@@ -266,8 +285,8 @@ def train_gan(kind, train, cfg):
             for p in critic.parameters(): p.requires_grad_(True)
             for _ in range(cfg['n_critic']):
                 real, iterator = next_images(iterator, dl, cfg['device'])
-                # Freeze generator BN statistics during critic-only updates.
-                generator.eval()
+                # Use the same BatchNorm behavior as generator updates; no_grad detaches critic inputs.
+                generator.train()
                 with torch.no_grad(): fake = generator.sample(len(real))
                 co.zero_grad(set_to_none=True)
                 distance = critic(real).mean() - critic(fake).mean()
@@ -341,7 +360,8 @@ def save_reconstructions(model, test, cfg, path):
 
 def write_result(name, row, cfg):
     row.update(experiment=name, smoke_only=cfg['smoke'], configuration_signature=config_signature(cfg),
-               checkpoint_selection='final scheduled epoch; no selection on test FID', evaluation_split='held-out CIFAR-10 test')
+               checkpoint_selection=('final VQ autoencoder; validation-best PixelCNN; no test selection'
+                                     if name.startswith('vqvae') else 'final scheduled epoch; no selection on test FID'), evaluation_split='held-out CIFAR-10 test')
     atomic_json(Path(cfg['run_dir']) / name / 'metrics.json', row)
     return row
 
@@ -381,7 +401,8 @@ def run_part_a(cfg):
                    codebook_size=size, training_seconds=duration + prior_duration, autoencoder_training_seconds=duration,
                    prior_training_seconds=prior_duration, epochs=cfg['vq_epochs'], prior_epochs=cfg['prior_epochs'],
                    trainable_parameters=sum(p.numel() for p in model.parameters()) + sum(p.numel() for p in prior.parameters()),
-                   prior_val_bits_per_code=prior_history[-1]['val_bits_per_code'])
+                   prior_val_bits_per_code=min(prior_history, key=lambda r: r['val_nats_per_code'])['val_bits_per_code'],
+                   prior_selected_epoch=min(prior_history, key=lambda r: r['val_nats_per_code'])['epoch'])
         save_reconstructions(model, test, cfg, path)
         row.update(evaluate_generator(lambda count: model.decode_codes(prior.sample(count)), test, cfg, path))
         results.append(write_result(name, row, cfg)); del model, prior; gc.collect()
